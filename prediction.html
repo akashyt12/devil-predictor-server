@@ -365,12 +365,31 @@ renderHistory();
 
 // REAL TIMER - Uses jaiclub44.com backend (draw.ar-lottery06.com)
 const DRAW_BASE='https://draw.ar-lottery06.com';
-let serverOffset=0;
+let serverOffset=null;
 function syncServerTime(serviceTime){
   if(serviceTime)serverOffset=serviceTime-Date.now();
 }
 function serverNow(){
+  if(serverOffset===null)return Date.now();
   return Date.now()+serverOffset;
+}
+
+async function syncFromHistory(){
+  try{
+    const apiPath=selectedTimer==='1min'?'WinGo_1M':'WinGo_30S';
+    const res=await fetch(DRAW_BASE+'/WinGo/'+apiPath+'/GetHistoryIssuePage.json?pageSize=1&t='+Date.now());
+    const data=await res.json();
+    const svc=data.serverTime||data.serviceTime||0;
+    if(svc)serverOffset=svc-Date.now();
+    if(data&&data.data&&data.data.list){
+      recentNumbers=data.data.list.slice(0,8).map(i=>parseInt(i.number));
+      renderHistory();
+    }
+  }catch(e){}
+}
+
+async function syncTimerHistory(){
+  await syncFromHistory();
 }
 
 async function runTimer(){
@@ -403,6 +422,7 @@ async function runTimer(){
         hasPredicted=false;
         checkSaved(newPeriod);
         fetchRecentResults();
+        syncTimerHistory();
       }
 
       // Auto-disable when timer low (last 5 sec)
@@ -433,17 +453,19 @@ async function runTimer(){
     }
   }
 
+  await syncTimerHistory();
   await fetchTimer();
   clockInterval=setInterval(fetchTimer,1000);
 }
 
-// Fetch real history from WinGo API
+// Fetch real history from WinGo API (also re-syncs server clock)
 async function fetchRecentResults(){
   const apiPath=selectedTimer==='1min'?'WinGo_1M':'WinGo_30S';
   try{
     const res=await fetch(DRAW_BASE+'/WinGo/'+apiPath+'/GetHistoryIssuePage.json?pageSize=10&pageNo=1&t='+Date.now());
     const data=await res.json();
-    if(data&&data.serviceTime)syncServerTime(data.serviceTime);
+    const svc=data.serverTime||data.serviceTime||0;
+    if(svc)serverOffset=svc-Date.now();
     if(data&&data.data&&data.data.list){
       recentNumbers=data.data.list.slice(0,8).map(i=>parseInt(i.number));
       renderHistory();
