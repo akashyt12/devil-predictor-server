@@ -365,97 +365,94 @@ renderHistory();
 
 // REAL TIMER - Uses jaiclub44.com backend (draw.ar-lottery06.com)
 const DRAW_BASE='https://draw.ar-lottery06.com';
-let serverOffset=null;
-function syncServerTime(serviceTime){
-  if(serviceTime)serverOffset=serviceTime-Date.now();
-}
+
+let serverOffset=0;
 function serverNow(){
-  if(serverOffset===null)return Date.now();
   return Date.now()+serverOffset;
 }
 
-async function syncFromHistory(){
+function digits(sec){
+  return String(Math.max(0,Math.floor(sec))).padStart(2,'0');
+}
+
+async function syncServerClock(){
   try{
     const apiPath=selectedTimer==='1min'?'WinGo_1M':'WinGo_30S';
     const res=await fetch(DRAW_BASE+'/WinGo/'+apiPath+'/GetHistoryIssuePage.json?pageSize=1&t='+Date.now());
     const data=await res.json();
     const svc=data.serverTime||data.serviceTime||0;
     if(svc)serverOffset=svc-Date.now();
-    if(data&&data.data&&data.data.list){
-      recentNumbers=data.data.list.slice(0,8).map(i=>parseInt(i.number));
-      renderHistory();
-    }
   }catch(e){}
-}
-
-async function syncTimerHistory(){
-  await syncFromHistory();
 }
 
 async function runTimer(){
   if(clockInterval)clearInterval(clockInterval);
 
-  async function fetchTimer(){
+  // Counter vars
+  let endTime=0;
+  let loadedPeriod='';
+
+  async function loadNext(){
     try{
       const apiPath=selectedTimer==='1min'?'WinGo_1M':'WinGo_30S';
-      const res=await fetch(DRAW_BASE+'/WinGo/'+apiPath+'.json?t='+Date.now());
+      const res=await fetch(DRAW_BASE+'/WinGo/'+apiPath+'.json?t='+Date.now()+'&r='+Math.random());
       const data=await res.json();
-
       const cur=data.current||{};
-      let remain=Math.max(0,Math.floor((cur.endTime-serverNow())/1000));
-      if(!isFinite(remain))remain=0;
-      let newPeriod=cur.issueNumber||'';
-
-      // Update countdown display
-      const mins=Math.floor(remain/60);
-      const secs=remain%60;
-      document.getElementById('t-m1').innerText=String(mins).padStart(2,'0')[0];
-      document.getElementById('t-m2').innerText=String(mins).padStart(2,'0')[1];
-      document.getElementById('t-s1').innerText=String(secs).padStart(2,'0')[0];
-      document.getElementById('t-s2').innerText=String(secs).padStart(2,'0')[1];
+      const newPeriod=cur.issueNumber||'';
+      endTime=cur.endTime||0;
 
       // New period detected
-      if(newPeriod&&newPeriod!==lastPeriod){
-        lastPeriod=newPeriod;
-        currentPeriod=newPeriod;
-        periodDisplay.innerText=newPeriod;
-        hasPredicted=false;
-        checkSaved(newPeriod);
-        fetchRecentResults();
-        syncTimerHistory();
+      if(newPeriod&&newPeriod!==loadedPeriod){
+        loadedPeriod=newPeriod;
+        if(newPeriod!==lastPeriod){
+          lastPeriod=newPeriod;
+          currentPeriod=newPeriod;
+          periodDisplay.innerText=newPeriod;
+          hasPredicted=false;
+          checkSaved(newPeriod);
+          fetchRecentResults();
+        }
       }
+    }catch(e){}
+  }
 
-      // Auto-disable when timer low (last 5 sec)
-      if(remain<=5&&!hasPredicted){
-        btn.className='predict-btn locked';
-        btn.innerText='TOO LATE - WAIT';
-      }
+  function render(remain){
+    remain=Math.max(0,Math.floor(remain/1000));
+    const mins=Math.floor(remain/60);
+    const secs=remain%60;
+    document.getElementById('t-m1').innerText=digits(mins)[0];
+    document.getElementById('t-m2').innerText=digits(mins)[1];
+    document.getElementById('t-s1').innerText=digits(secs)[0];
+    document.getElementById('t-s2').innerText=digits(secs)[1];
+  }
 
-      // Button logic
-      if(hasPredicted){
-        btn.className='predict-btn locked';
-        btn.innerText='WAIT FOR NEXT RESULTS';
-      }else if(remain>5){
-        btn.className='predict-btn ready';
-        btn.innerText='GET PREDICTION';
-      }
-
-    }catch(e){
-      // Fallback: local countdown (30sec = every 30s, 1min = every 60s)
-      const now=new Date();
-      const s=now.getSeconds();
-      const rem=selectedTimer==='30sec'?(30-s%30):(60-s);
-      const r=rem.toString().padStart(2,'0');
-      document.getElementById('t-m1').innerText='0';
-      document.getElementById('t-m2').innerText='0';
-      document.getElementById('t-s1').innerText=r[0];
-      document.getElementById('t-s2').innerText=r[1];
+  function updateButtons(remain){
+    const secs=Math.floor(remain/1000);
+    if(!hasPredicted&&secs<=5){
+      btn.className='predict-btn locked';
+      btn.innerText='TOO LATE - WAIT';
+    }else if(hasPredicted){
+      btn.className='predict-btn locked';
+      btn.innerText='WAIT FOR NEXT RESULTS';
+    }else if(secs>5){
+      btn.className='predict-btn ready';
+      btn.innerText='GET PREDICTION';
     }
   }
 
-  await syncTimerHistory();
-  await fetchTimer();
-  clockInterval=setInterval(fetchTimer,1000);
+  function tick(){
+    loadNext();
+    if(!endTime)return;
+    const remain=endTime-serverNow();
+    render(remain);
+    updateButtons(remain);
+    if(remain<=0){endTime=0;loadNext();}
+  }
+
+  await syncServerClock();
+  await loadNext();
+  tick();
+  clockInterval=setInterval(tick,1000);
 }
 
 // Fetch real history from WinGo API (also re-syncs server clock)
