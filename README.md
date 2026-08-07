@@ -1,2 +1,2 @@
-# devil-predictor-server
-DEVIL PREDICTOR - AI WinGo prediction server
+# DEVIL_PREDICTOR_BY-_SERVER
+DEVIL IS EVIL
