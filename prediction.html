@@ -200,7 +200,7 @@ body{display:flex;justify-content:center;align-items:center;font-family:'Exo 2',
 
 <!-- TIMER -->
 <div class="timer-card">
-  <div class="timer-label">SERVER TIME REMAINING</div>
+  <div class="timer-label">REAL TIME - NEXT DRAW IN</div>
   <div class="timer-display">
     <div class="timer-box" id="t-m1">0</div>
     <div class="timer-box" id="t-m2">0</div>
@@ -214,9 +214,17 @@ body{display:flex;justify-content:center;align-items:center;font-family:'Exo 2',
 <div class="period-card">
   <div class="period-label">
     <span class="period-icon">&#128202;</span>
-    <span class="period-title">ACTIVE PERIOD</span>
+    <span class="period-title">CURRENT PERIOD</span>
   </div>
   <div class="period-value" id="periodDisplay">SYNCING...</div>
+</div>
+
+<div class="period-card" style="border-color:rgba(34,211,238,0.3)">
+  <div class="period-label">
+    <span class="period-icon">&#128329;&#65039;</span>
+    <span class="period-title" style="color:var(--cyan-light)">NEXT PERIOD</span>
+  </div>
+  <div class="period-value" id="nextPeriodDisplay" style="color:var(--cyan-light)">SYNCING...</div>
 </div>
 
 <!-- RESULT -->
@@ -363,106 +371,91 @@ function renderHistory(){
 }
 renderHistory();
 
-// REAL TIMER - Uses jaiclub44.com backend (draw.ar-lottery06.com)
+// REAL TIMER - device clock (real India time), period format YYYYMMDD1000+INDEX
 const DRAW_BASE='https://draw.ar-lottery06.com';
 
-let serverOffset=0;
-function serverNow(){
-  return Date.now()+serverOffset;
+function deviceUtcSec(){
+  const now=new Date();
+  return now.getUTCHours()*3600+now.getUTCMinutes()*60+now.getUTCSeconds()+(now.getUTCMilliseconds()/1000);
+}
+
+function getRemaining(){
+  return TOTAL_TIME-(Math.floor(deviceUtcSec())%TOTAL_TIME);
+}
+
+function devicePeriodFor(offset){
+  const now=new Date();
+  const y=now.getUTCFullYear();
+  const mo=('0'+(now.getUTCMonth()+1)).slice(-2);
+  const d=('0'+now.getUTCDate()).slice(-2);
+  const utc=Math.floor(deviceUtcSec());
+  const interval=TOTAL_TIME;
+  const idx=Math.floor(utc/interval)+offset;
+  return ''+y+mo+d+'1000'+String(idx).padStart(5,'0');
 }
 
 function digits(sec){
   return String(Math.max(0,Math.floor(sec))).padStart(2,'0');
 }
 
-async function syncServerClock(){
-  try{
-    const apiPath=selectedTimer==='1min'?'WinGo_1M':'WinGo_30S';
-    const res=await fetch(DRAW_BASE+'/WinGo/'+apiPath+'/GetHistoryIssuePage.json?pageSize=1&t='+Date.now());
-    const data=await res.json();
-    const svc=data.serverTime||data.serviceTime||0;
-    if(svc)serverOffset=svc-Date.now();
-  }catch(e){}
-}
-
 async function runTimer(){
   if(clockInterval)clearInterval(clockInterval);
 
-  // Counter vars
-  let endTime=0;
   let loadedPeriod='';
 
-  async function loadNext(){
-    try{
-      const apiPath=selectedTimer==='1min'?'WinGo_1M':'WinGo_30S';
-      const res=await fetch(DRAW_BASE+'/WinGo/'+apiPath+'.json?t='+Date.now()+'&r='+Math.random());
-      const data=await res.json();
-      const cur=data.current||{};
-      const newPeriod=cur.issueNumber||'';
-      endTime=cur.endTime||0;
-
-      // New period detected
-      if(newPeriod&&newPeriod!==loadedPeriod){
-        loadedPeriod=newPeriod;
-        if(newPeriod!==lastPeriod){
-          lastPeriod=newPeriod;
-          currentPeriod=newPeriod;
-          periodDisplay.innerText=newPeriod;
-          hasPredicted=false;
-          checkSaved(newPeriod);
-          fetchRecentResults();
-        }
-      }
-    }catch(e){}
-  }
-
-  function render(remain){
-    remain=Math.max(0,Math.floor(remain/1000));
+  function render(){
+    const remain=getRemaining();
     const mins=Math.floor(remain/60);
     const secs=remain%60;
     document.getElementById('t-m1').innerText=digits(mins)[0];
     document.getElementById('t-m2').innerText=digits(mins)[1];
     document.getElementById('t-s1').innerText=digits(secs)[0];
     document.getElementById('t-s2').innerText=digits(secs)[1];
-  }
+    updateButtons(secs);
 
-  function updateButtons(remain){
-    const secs=Math.floor(remain/1000);
-    if(!hasPredicted&&secs<=5){
-      btn.className='predict-btn locked';
-      btn.innerText='TOO LATE - WAIT';
-    }else if(hasPredicted){
-      btn.className='predict-btn locked';
-      btn.innerText='WAIT FOR NEXT RESULTS';
-    }else if(secs>5){
-      btn.className='predict-btn ready';
-      btn.innerText='GET PREDICTION';
+    const newPeriod=devicePeriodFor(0);
+    const nxtPeriod=devicePeriodFor(1);
+    document.getElementById('periodDisplay').innerText=newPeriod;
+    document.getElementById('nextPeriodDisplay').innerText=nxtPeriod;
+
+    // New period detected
+    if(newPeriod!==loadedPeriod){
+      loadedPeriod=newPeriod;
+      if(newPeriod!==lastPeriod){
+        lastPeriod=newPeriod;
+        currentPeriod=newPeriod;
+        hasPredicted=false;
+        checkSaved(newPeriod);
+        fetchRecentResults();
+      }
     }
   }
 
-  function tick(){
-    loadNext();
-    if(!endTime)return;
-    const remain=endTime-serverNow();
-    render(remain);
-    updateButtons(remain);
-    if(remain<=0){endTime=0;loadNext();}
-  }
-
-  await syncServerClock();
-  await loadNext();
-  tick();
-  clockInterval=setInterval(tick,1000);
+  render();
+  clockInterval=setInterval(render,100);
 }
 
-// Fetch real history from WinGo API (also re-syncs server clock)
+function updateButtons(secs){
+  if(!hasPredicted&&secs<=5){
+    btn.className='predict-btn locked';
+    btn.innerText='TOO LATE - WAIT';
+  }else if(hasPredicted){
+    btn.className='predict-btn locked';
+    btn.innerText='WAIT FOR NEXT RESULTS';
+    statusText.innerText='PREDICTION LOCKED';
+  }else if(secs>5){
+    btn.className='predict-btn ready';
+    btn.innerText='GET PREDICTION';
+    statusText.innerText='READY';
+  }
+}
+
+// Fetch real history from WinGo API (results only; timer uses device clock)
 async function fetchRecentResults(){
   const apiPath=selectedTimer==='1min'?'WinGo_1M':'WinGo_30S';
   try{
     const res=await fetch(DRAW_BASE+'/WinGo/'+apiPath+'/GetHistoryIssuePage.json?pageSize=10&pageNo=1&t='+Date.now());
     const data=await res.json();
-    const svc=data.serverTime||data.serviceTime||0;
-    if(svc)serverOffset=svc-Date.now();
     if(data&&data.data&&data.data.list){
       recentNumbers=data.data.list.slice(0,8).map(i=>parseInt(i.number));
       renderHistory();
